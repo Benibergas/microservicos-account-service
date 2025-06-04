@@ -5,7 +5,7 @@ metadata:
   namespace: default
 type: Opaque
 data:
-  postgres-host: cG9zdGdyZXM=
+  postgres-host: cG9zdGdyZXNxbA==  # base64 de "postgresql"
   postgres-db: c3RvcmU=
   postgres-user: c3RvcmU=
   postgres-password: NWVDcjN0
