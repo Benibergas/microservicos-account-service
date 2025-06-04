@@ -5,10 +5,12 @@ metadata:
   namespace: default
 type: Opaque
 data:
-  postgres-host: cG9zdGdyZXNxbA==  # base64 de "postgresql"
-  postgres-db: c3RvcmU=
-  postgres-user: c3RvcmU=
-  postgres-password: NWVDcjN0
+  # Aqui continua sendo 'cG9zdGdyZXNxbA==' (base64 de "postgresql"),
+  # mas o Service PostgreSQL deve existir com esse mesmo nome.
+  postgres-host: cG9zdGdyZXNxbA==  
+  postgres-db: c3RvcmU=            # "store"
+  postgres-user: c3RvcmU=          # "store"
+  postgres-password: NWVDcjN0      # "5eCr3t"
   jwt-secret-key: eXJCQmdZbHZKUWVzbHpGbGdYOU1GWmNjVG9JMmZqUkZxdWFscXVlcmNvaXNh
 
 ---
@@ -47,7 +49,9 @@ spec:
         image: mmp052/account:latest
         ports:
         - containerPort: 8080
+
         env:
+        # 1) “Variáveis brutas” vindas do Secret:
         - name: DATABASE_HOST
           valueFrom:
             secretKeyRef:
@@ -68,11 +72,23 @@ spec:
             secretKeyRef:
               name: account-secret
               key: postgres-password
-        - name: JWT_SECRET_KEY
+
+        # 2) As variáveis que o Spring Boot espera diretamente:
+        - name: SPRING_DATASOURCE_URL
+          # Kubernetes expande $(DATABASE_HOST) e $(DATABASE_DB) em tempo de execução
+          value: "jdbc:postgresql://$(DATABASE_HOST):5432/$(DATABASE_DB)"
+        - name: SPRING_DATASOURCE_USERNAME
           valueFrom:
             secretKeyRef:
               name: account-secret
-              key: jwt-secret-key
+              key: postgres-user
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: account-secret
+              key: postgres-password
+
+        # 3) Outras propriedades do Spring puxadas do ConfigMap:
         - name: SPRING_PROFILES_ACTIVE
           valueFrom:
             configMapKeyRef:
@@ -98,6 +114,12 @@ spec:
             configMapKeyRef:
               name: account-config
               key: volume
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: account-secret
+              key: jwt-secret-key
+
         resources:
           requests:
             memory: "256Mi"
