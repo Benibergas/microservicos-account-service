@@ -1,3 +1,6 @@
+#--------------------------------------------------------
+# 1) Secret que contém host/user/password do Postgres (e também a chave JWT)
+#--------------------------------------------------------
 apiVersion: v1
 kind: Secret
 metadata:
@@ -5,28 +8,78 @@ metadata:
   namespace: default
 type: Opaque
 data:
-  # Aqui continua sendo 'cG9zdGdyZXNxbA==' (base64 de "postgresql"),
-  # mas o Service PostgreSQL deve existir com esse mesmo nome.
-  postgres-host: cG9zdGdyZXNxbA==  
-  postgres-db: c3RvcmU=            # "store"
-  postgres-user: c3RvcmU=          # "store"
-  postgres-password: NWVDcjN0      # "5eCr3t"
+  # “postgres” em base64 = “cG9zdGdyZXM=”
+  postgres-host: cG9zdGdyZXM=
+  postgres-db:    c3RvcmU=            # base64("store")
+  postgres-user:  c3RvcmU=            # base64("store")
+  postgres-password: NWVDcjN0         # base64("5eCr3t")
   jwt-secret-key: eXJCQmdZbHZKUWVzbHpGbGdYOU1GWmNjVG9JMmZqUkZxdWFscXVlcmNvaXNh
 
 ---
-apiVersion: v1
-kind: ConfigMap
+#--------------------------------------------------------
+# 2) Deployment do PostgreSQL
+#--------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: account-config
+  name: postgres
   namespace: default
-data:
-  spring.profiles.active: "production"
-  server.port: "8080"
-  logging.level.store: "debug"
-  jwt.algorithm: "HS256"
-  volume: "./volume"
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_DB
+              value: store
+            - name: POSTGRES_USER
+              value: store
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: account-secret
+                  key: postgres-password
+          ports:
+            - containerPort: 5432
+          # (opcional) monte um PVC se precisar de persistência:
+          # volumeMounts:
+          #   - name: postgres-data
+          #     mountPath: /var/lib/postgresql/data
+      # volumes:
+      #   - name: postgres-data
+      #     persistentVolumeClaim:
+      #       claimName: postgres-pvc
 
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: default
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+
+---
+#--------------------------------------------------------
+# 3) Deployment do account-service
+#--------------------------------------------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,92 +98,37 @@ spec:
         app: account
     spec:
       containers:
-      - name: account
-        image: mmp052/account:latest
-        ports:
-        - containerPort: 8080
-
-        env:
-        # 1) “Variáveis brutas” vindas do Secret:
-        - name: DATABASE_HOST
-          valueFrom:
-            secretKeyRef:
-              name: account-secret 
-              key: postgres-host
-        - name: DATABASE_DB
-          valueFrom:
-            secretKeyRef:
-              name: account-secret
-              key: postgres-db
-        - name: DATABASE_USER
-          valueFrom:
-            secretKeyRef:
-              name: account-secret
-              key: postgres-user
-        - name: DATABASE_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: account-secret
-              key: postgres-password
-
-        # 2) As variáveis que o Spring Boot espera diretamente:
-        - name: SPRING_DATASOURCE_URL
-          # Kubernetes expande $(DATABASE_HOST) e $(DATABASE_DB) em tempo de execução
-          value: "jdbc:postgresql://$(DATABASE_HOST):5432/$(DATABASE_DB)"
-        - name: SPRING_DATASOURCE_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: account-secret
-              key: postgres-user
-        - name: SPRING_DATASOURCE_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: account-secret
-              key: postgres-password
-
-        # 3) Outras propriedades do Spring puxadas do ConfigMap:
-        - name: SPRING_PROFILES_ACTIVE
-          valueFrom:
-            configMapKeyRef:
-              name: account-config
-              key: spring.profiles.active
-        - name: SERVER_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: account-config
-              key: server.port
-        - name: LOGGING_LEVEL_STORE
-          valueFrom:
-            configMapKeyRef:
-              name: account-config
-              key: logging.level.store
-        - name: JWT_ALGORITHM
-          valueFrom:
-            configMapKeyRef:
-              name: account-config
-              key: jwt.algorithm
-        - name: VOLUME
-          valueFrom:
-            configMapKeyRef:
-              name: account-config
-              key: volume
-        - name: JWT_SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: account-secret
-              key: jwt-secret-key
-
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
+        - name: account
+          # Substitua pela sua imagem real do Docker (por exemplo, se usar DockerHub):
+          #   image: meu-usuario-docker/account-service:latest
+          image: microservicos-account-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: account-secret
+                  key: postgres-host
+            - name: DATABASE_PORT
+              value: "5432"
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: account-secret
+                  key: postgres-user
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: account-secret
+                  key: postgres-password
+            - name: SPRING_PROFILES_ACTIVE
+              value: production
 
 ---
-apiVersion: v1
 kind: Service
+apiVersion: v1
 metadata:
   name: account
   namespace: default
@@ -140,7 +138,7 @@ spec:
   selector:
     app: account
   ports:
-  - protocol: TCP
-    port: 8080
-    targetPort: 8080
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
   type: ClusterIP
